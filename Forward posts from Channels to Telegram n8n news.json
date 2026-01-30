@@ -1,0 +1,853 @@
+{
+  "name": "Forward posts from Channels to Telegram n8n news",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        560,
+        784
+      ],
+      "typeVersion": 1.2,
+      "id": "c3cc4d1b-2798-4e60-8fd2-ab702704ed04",
+      "notes": "Triggers the workflow daily at 9 AM. Adjust the time according to your needs."
+    },
+    {
+      "parameters": {
+        "url": "=https://t.me/s/{{ $json.channel_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Fetch Channel Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1232,
+        720
+      ],
+      "notesInFlow": true,
+      "typeVersion": 4.2,
+      "id": "804e6de1-02d8-4b28-8e57-a6dcec5b8154",
+      "notes": "Fetches the HTML content of the source Telegram channel"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 1. Get the data\nlet post = $json.post;\nlet rawId = $json.postIdNumber; \nlet photoRaw = $json.photo;\nlet video = $json.video;\n\n// 2. Transform ID and Telegram Link\nif (rawId && typeof rawId === 'string') {\n    $json.postLink = `https://t.me/${rawId}`;\n    $json.postId = parseInt(rawId.split('/').pop());\n    \n    // ADDED: Create matching field for Merge node\n    $json.channelName = rawId.split('/')[0].trim(); \n} else {\n    $json.postId = 0;\n    $json.channelName = null;\n}\n\n// 3. Clean Photo URL\nif (photoRaw && typeof photoRaw === 'string') {\n    if (photoRaw.includes('url')) {\n        let match = photoRaw.match(/url\\(['\"]?([^'\"]+)['\"]?\\)/);\n        $json.photo = match ? match[1] : photoRaw;\n    }\n} else {\n    $json.photo = null;\n}\n\n// 4. Video Pass-through\n$json.video = video || null;\n\n// 5. Clean up post text (Signature & Link logic)\nconst signature = $('Set Telegram Channels').first().json.channelSignature;\n\nif (typeof post === 'string') {\n    // Convert HTML entities back to symbols\n    let decodedPost = post\n        .replace(/&gt;/g, '>')\n        .replace(/&lt;/g, '<')\n        .replace(/&amp;/g, '&')\n        .replace(/&quot;/g, '\"');\n\n    // Remove signature\n    if (signature) {\n        const escaped = signature.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n        decodedPost = decodedPost.replace(new RegExp(escaped, 'g'), '');\n    }\n\n    // Identify links\n    let linkRegex = /(https?:\\/\\/[^\\s\\[\\]>]+)/g;\n    let links = decodedPost.match(linkRegex);\n    let lastLink = links ? links[links.length - 1] : null;\n\n    let cleanText = decodedPost\n        .replace(/>>>/g, '') // Now correctly matches the decoded >>>\n        .replace(linkRegex, '') \n        .replace(/\\[[^\\]]+\\]/g, '') \n        .trim();\n\n    $json.post = lastLink ? `${cleanText}\\n\\n${lastLink}` : cleanText;\n}\nreturn $json;"
+      },
+      "name": "Clean Post Content",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1904,
+        720
+      ],
+      "notesInFlow": true,
+      "typeVersion": 2,
+      "id": "75051408-1285-4d2d-881f-ba75717b1374",
+      "notes": "Removes original channel signature and cleans up the text"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 1. Get the current photo value\nlet photo = $json.photo;\n\n// 2. If it's still wrapped in CSS background-image:url('...'), clean it\nif (photo && typeof photo === 'string' && photo.includes('url(')) {\n    // This regex is much safer and won't throw 'Unmatched )'\n    const match = photo.match(/url\\(['\"]?([^'\"]+)['\"]?\\)/i);\n    \n    if (match && match[1]) {\n        $json.photo = match[1];\n    }\n}\n\n// 3. Return the modified item\nreturn $json;"
+      },
+      "name": "Process Media URLs",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        2576,
+        784
+      ],
+      "notesInFlow": true,
+      "typeVersion": 2,
+      "id": "c6b331cb-3758-4a64-a421-fde02edd65ef",
+      "notes": "Extracts clean URLs from CSS style attributes for images"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "202a35e0-040c-47d2-9aaa-2f7d295ac2dd",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.photo }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Has Photo?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        2800,
+        496
+      ],
+      "typeVersion": 2.2,
+      "id": "570a606d-97b4-40f2-8a55-467a8659ebcc",
+      "onError": "continueRegularOutput",
+      "notes": "Checks if the post contains a photo"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "95dcac89-39c4-4a0a-8c1c-e1c560be755f",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.video }}",
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Has Video?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        2800,
+        880
+      ],
+      "typeVersion": 2.2,
+      "id": "e53fb863-50ac-40fd-adfa-f307b86cd3dc",
+      "onError": "continueRegularOutput",
+      "notes": "Checks if the post contains a video"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "7d0504ca-12c6-4496-8879-3f7d295ac2dd",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.video }}",
+              "rightValue": ""
+            },
+            {
+              "id": "3cca8e10-546a-4b42-ac6f-0cc91773949c",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.photo }}",
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Text Only?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        2800,
+        688
+      ],
+      "typeVersion": 2.2,
+      "id": "4a04e792-3c19-4aa3-a977-0b58fbf55dcd",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.photo }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Download Photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        3024,
+        496
+      ],
+      "notesInFlow": true,
+      "typeVersion": 4.2,
+      "id": "7ba76d97-a71d-4a7d-aeb9-8c3c1300b7f1",
+      "notes": "Downloads the photo from Telegram servers"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.video }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "name": "Download Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        3024,
+        880
+      ],
+      "notesInFlow": true,
+      "typeVersion": 4.2,
+      "id": "2916cdbf-2e81-46fe-8d9a-6c4f5394f001",
+      "notes": "Downloads the video from Telegram servers"
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "={{ $('Set Telegram Channels').first().json.targetChannel }}",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "={{ $json.post }}\nSource: {{ $json.postLink }}"
+        }
+      },
+      "name": "Send Photo to Channel",
+      "type": "n8n-nodes-base.telegram",
+      "position": [
+        3248,
+        496
+      ],
+      "webhookId": "73942579-05c0-46e3-9776-be32ee843fbf",
+      "typeVersion": 1.2,
+      "id": "2009e8f4-1e77-48f8-ae79-211412f94409",
+      "credentials": {
+        "telegramApi": {
+          "id": "aLhdrnCLKlLfT15O",
+          "name": "Telegram account 2"
+        }
+      },
+      "notes": "Sends the translated post with photo to target channel"
+    },
+    {
+      "parameters": {
+        "operation": "sendVideo",
+        "chatId": "={{ $('Set Telegram Channels').item.json.targetChannel }}",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "={{ $json.post }}\nSource: {{ $json.postLink }}"
+        }
+      },
+      "name": "Send Video to Channel",
+      "type": "n8n-nodes-base.telegram",
+      "position": [
+        3248,
+        880
+      ],
+      "webhookId": "7cb8af06-bb52-4580-a854-c93a756fc287",
+      "typeVersion": 1.2,
+      "id": "0bd87b13-871f-426f-a209-879fe95437b3",
+      "credentials": {
+        "telegramApi": {
+          "id": "aLhdrnCLKlLfT15O",
+          "name": "Telegram account 2"
+        }
+      },
+      "notes": "Sends the translated post with video to target channel"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Set Telegram Channels').item.json.targetChannel }}",
+        "text": "={{ $json.post }}\nSource: {{ $json.postLink }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Send Text to Channel",
+      "type": "n8n-nodes-base.telegram",
+      "position": [
+        3024,
+        688
+      ],
+      "webhookId": "d95c40d2-9125-4c4a-8a7b-88d9c6607dc2",
+      "typeVersion": 1.2,
+      "id": "fa06667d-ff31-4f23-88fb-94238a48a7c7",
+      "credentials": {
+        "telegramApi": {
+          "id": "aLhdrnCLKlLfT15O",
+          "name": "Telegram account 2"
+        }
+      },
+      "notes": "Sends text-only translated posts to target channel"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "target_channel",
+              "name": "targetChannel",
+              "type": "string",
+              "value": "-1002638343999"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Set Telegram Channels",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        784,
+        784
+      ],
+      "notesInFlow": true,
+      "typeVersion": 3.4,
+      "id": "84ea6da9-267f-4b83-866d-c584c256a276",
+      "notes": "Configure your source channel, target channel, and other settings here"
+    },
+    {
+      "parameters": {
+        "content": "## 1. Get the html content of the source Telegram channel\nIn this part of the workflow we fetch the html content of source channel and then extract text, images, and videos from the latest Telegram post.\nRemoves original channel signatures and cleans up the text",
+        "height": 220,
+        "width": 1360,
+        "color": 7
+      },
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        944,
+        656
+      ],
+      "typeVersion": 1,
+      "id": "acd1e8d8-d73f-4da7-a7e5-5c757a81d5e7"
+    },
+    {
+      "parameters": {
+        "content": "## 3. Extract Media URLs and Identify Media Type\nTelegram uses different methods for handling image and video content. In this step, we identify the type of media included in the post.\n\nIf the post contains an image or video, the corresponding media file is downloaded.",
+        "height": 720,
+        "width": 680,
+        "color": 7
+      },
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2512,
+        320
+      ],
+      "typeVersion": 1,
+      "id": "39b9ae26-552b-4952-89b6-2fc91381052f"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "Utao0EG2Dl9HBvUY",
+          "mode": "list",
+          "cachedResultName": "TelegramState",
+          "cachedResultUrl": "/projects/mdXOd1baVcK8yp8E/datatables/Utao0EG2Dl9HBvUY"
+        },
+        "matchType": "allConditions"
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1008,
+        784
+      ],
+      "id": "81e129ce-9e33-44c2-8a79-6d04cf0ec0ca",
+      "name": "Get row(s)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "45550eca-d3e0-45b6-ac3c-df58400c4e8f",
+              "leftValue": "={{ $json.postId }}",
+              "rightValue": "={{ $json.last_message_id }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "67c4a235-51e5-473a-b5cb-8ba1d63b7072",
+              "leftValue": "={{ $json.channelName }}",
+              "rightValue": "={{ $json.channel_name }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        2352,
+        784
+      ],
+      "id": "5120319e-7cc6-4031-bf93-976679691821",
+      "name": "Filter"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst output = [];\n\n// Get signature from the 'Set Telegram Channels' node if it exists\nlet signature = \"\";\ntry {\n    signature = $('Set Telegram Channels').first().json.channelSignature;\n} catch (e) {}\n\nfor (const item of items) {\n    const messages = item.json.messageHtml || [];\n    const messageArray = Array.isArray(messages) ? messages : [messages];\n    \n    let skipNextPost = false;\n\n    for (const html of messageArray) {\n        if (!html || typeof html !== 'string') continue;\n\n        // 0. Sponsored Content Check\n        if (html.includes('תוכן שיווקי')) {\n            skipNextPost = true;\n            continue; \n        }\n        if (skipNextPost) {\n            skipNextPost = false;\n            continue;\n        }\n\n        // 1. Extract ID & Channel\n        const idMatch = html.match(/href=\"https:\\/\\/t\\.me\\/([a-zA-Z0-9_]+\\/\\d+)\"/i);\n        const rawId = idMatch ? idMatch[1] : null;\n        if (!rawId) continue;\n\n        const channelName = rawId.split('/')[0].trim();\n        const postId = parseInt(rawId.split('/').pop());\n\n        // 2. Extract Photo (Ignore Emojis)\n        const photoMatch = html.match(/background-image\\s*:\\s*url\\(['\"]?([^'\")]+)['\"]?\\)/i);\n        let photoUrl = photoMatch ? photoMatch[1] : null;\n        if (photoUrl && (photoUrl.includes('telegram.org') || photoUrl.startsWith('//'))) {\n            photoUrl = null;\n        }\n\n        // 3. Extract Video\n        const videoMatch = html.match(/<video[^>]*src\\s*=\\s*[\"']([^\"']+)[\"']/i);\n        \n        // 4. Extract and Clean Text\n        const textMatch = html.match(/js-message_text[^>]*>([\\s\\S]*?)<\\/div>/i);\n        let rawText = textMatch ? textMatch[1] : \"\";\n        \n        let decodedText = rawText\n            .replace(/<br\\s*\\/?>/gi, '\\n') \n            .replace(/&gt;/g, '>')\n            .replace(/&lt;/g, '<')\n            .replace(/&amp;/g, '&')\n            .replace(/&quot;/g, '\"')\n            .replace(/<[^>]*>?/gm, '');\n\n        // 4.1 Signature removal\n        if (signature && decodedText.includes(signature)) {\n            const escaped = signature.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n            decodedText = decodedText.replace(new RegExp(escaped, 'g'), '');\n        }\n\n        // 4.2 Footer removal (Comments / Response links)\n        // This removes \"תגובה אחת\", \"5 תגובות\", or the \"כדי להגיב...\" phrase from the end\n        decodedText = decodedText\n            .replace(/(תגובה אחת|\\d+\\s+תגובות|כדי להגיב לכתבה לחצו כאן)\\s*$/g, '')\n            .trim();\n\n        // 4.3 Body link handling\n        let linkRegex = /(https?:\\/\\/[^\\s\\[\\]>]+)/g;\n        let links = decodedText.match(linkRegex);\n        let lastLink = links ? links[links.length - 1] : null;\n\n        let finalPostText = decodedText\n            .replace(/>>>/g, '') \n            .replace(linkRegex, '') \n            .replace(/\\[[^\\]]+\\]/g, '') \n            .trim();\n\n        if (lastLink) {\n            finalPostText += `\\n\\n${lastLink}`;\n        }\n\n        output.push({\n            json: {\n                postIdNumber: rawId,\n                postId: postId,\n                channelName: channelName,\n                photo: photoUrl,\n                video: videoMatch ? videoMatch[1] : null,\n                post: finalPostText,\n                postLink: `https://t.me/${rawId}`\n            }\n        });\n    }\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        720
+      ],
+      "id": "b9123f30-248e-4c99-8f6c-204a55d82b5f",
+      "name": "Aligner"
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "messageHtml",
+              "cssSelector": "div.tgme_widget_message",
+              "returnValue": "html",
+              "returnArray": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        1456,
+        720
+      ],
+      "id": "b50957ff-6735-41e3-b831-fe2600006958",
+      "name": "Extract Post Content"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "advanced": true,
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "=channelName",
+              "field2": "=channel_name"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2128,
+        784
+      ],
+      "id": "5de8a9a1-5270-4304-a2ef-2d21a1a71204",
+      "name": "Merge",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "sortFieldsUi": {
+          "sortField": [
+            {
+              "fieldName": "postId",
+              "order": "descending"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.sort",
+      "typeVersion": 1,
+      "position": [
+        2800,
+        1072
+      ],
+      "id": "b40a9da3-26bc-47ca-b326-b7c2d61f2a79",
+      "name": "Sort"
+    },
+    {
+      "parameters": {
+        "compare": "selectedFields",
+        "fieldsToCompare": "channelName",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        3024,
+        1072
+      ],
+      "id": "37bb73ad-3726-4b86-b9fd-d6e4196f0b17",
+      "name": "Remove Duplicates"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "Utao0EG2Dl9HBvUY",
+          "mode": "list",
+          "cachedResultName": "TelegramState",
+          "cachedResultUrl": "/projects/mdXOd1baVcK8yp8E/datatables/Utao0EG2Dl9HBvUY"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "channel_name",
+              "keyValue": "={{ $json.channelName }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "last_message_id": "={{ $json.postId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "channel_name",
+              "displayName": "channel_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "last_message_id",
+              "displayName": "last_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "dryRun": false
+        }
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3232,
+        1072
+      ],
+      "id": "48e6af9c-781e-4832-901a-b1e12aa0c894",
+      "name": "Update row(s)"
+    }
+  ],
+  "pinData": {
+    "Daily Schedule": [
+      {
+        "json": {
+          "timestamp": "2026-01-30T02:30:54.005+01:00",
+          "Readable date": "January 30th 2026, 2:30:54 am",
+          "Readable time": "2:30:54 am",
+          "Day of week": "Friday",
+          "Year": "2026",
+          "Month": "January",
+          "Day of month": "30",
+          "Hour": "02",
+          "Minute": "30",
+          "Second": "54",
+          "Timezone": "Europe/Prague (UTC+01:00)"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Has Photo?": {
+      "main": [
+        [
+          {
+            "node": "Download Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Video?": {
+      "main": [
+        [
+          {
+            "node": "Download Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text Only?": {
+      "main": [
+        [
+          {
+            "node": "Send Text to Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Schedule": {
+      "main": [
+        [
+          {
+            "node": "Set Telegram Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Photo": {
+      "main": [
+        [
+          {
+            "node": "Send Photo to Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Video": {
+      "main": [
+        [
+          {
+            "node": "Send Video to Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Post Content": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Channel Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Post Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Media URLs": {
+      "main": [
+        [
+          {
+            "node": "Has Photo?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has Video?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Text Only?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sort",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Telegram Channels": {
+      "main": [
+        [
+          {
+            "node": "Get row(s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s)": {
+      "main": [
+        [
+          {
+            "node": "Fetch Channel Page",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Filter": {
+      "main": [
+        [
+          {
+            "node": "Process Media URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aligner": {
+      "main": [
+        [
+          {
+            "node": "Clean Post Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Post Content": {
+      "main": [
+        [
+          {
+            "node": "Aligner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Photo to Channel": {
+      "main": [
+        []
+      ]
+    },
+    "Send Text to Channel": {
+      "main": [
+        []
+      ]
+    },
+    "Send Video to Channel": {
+      "main": [
+        []
+      ]
+    },
+    "Sort": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "executionOrder": "v0"
+  },
+  "versionId": "81f1991e-1c3e-4cd4-b775-e4e82df3c245",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6f9a84cf336d69715861b6df0081437c97cc3d2fa39a02f6cae717f3eaa52beb"
+  },
+  "id": "FdSK5Fnsk5QmluwQ",
+  "tags": []
+}
